@@ -1,0 +1,44 @@
+# On-prem ATT&CK exposure viewer for tenable-attack-mapper layers.
+# Your exposure data never leaves this machine — both services run locally.
+#
+#   cp .env.example .env        # set SC_URL to your Security Center
+#   docker compose up --build   # first run builds the official Navigator from source
+#
+# Two ways to look at the same standard Navigator layer:
+#   • Custom viewer  http://localhost:8080  — click a technique → see its findings;
+#                    click a finding → open its detail page on YOUR Security Center.
+#   • Official ATT&CK Navigator  http://localhost:4200  — the stock matrix UI.
+
+services:
+  # Custom viewer: better UX over the same standard layer format. Serves the
+  # viewer UI plus the ./layers files; generates config.js from SC_URL at start.
+  viewer:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    environment:
+      # The Security Center a finding's "Open in SC" link points at. Mirrors the
+      # TASC_SC_URL you use in tenable-attack-mapper's .env.
+      SC_URL: "${SC_URL:-https://localhost:8443}"
+      # Deep-link template for one plugin's vulnerabilities in Security Center.
+      # Tune to your SC version if needed; {scUrl} and {pluginId} are substituted.
+      SC_PLUGIN_URL_TEMPLATE: "${SC_PLUGIN_URL_TEMPLATE:-{scUrl}/#/analysis/vulnerabilities/sumid?sourceType=cumulative&pluginID={pluginId}}"
+    volumes:
+      - ./viewer:/usr/share/nginx/html
+      - ./layers:/usr/share/nginx/html/layers:ro
+      - ./nginx/viewer.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./bin/gen-config.sh:/docker-entrypoint.d/40-tam-config.sh:ro
+    restart: unless-stopped
+
+  # The official MITRE ATT&CK Navigator, built from source (no published image).
+  # Pinned to a tag for reproducibility — bump as needed. For standard-format
+  # viewing; auto-load a layer with:
+  #   http://localhost:4200/#layerURL=http://localhost:8080/layers/layer.json
+  navigator:
+    build:
+      context: "https://github.com/mitre-attack/attack-navigator.git#v5.1.0"
+      dockerfile: Dockerfile
+    image: attack-navigator:local
+    ports:
+      - "4200:80"
+    restart: unless-stopped

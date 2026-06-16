@@ -1,0 +1,17 @@
+# Secrets / local config
+.env
+.env_test
+.env.*
+!.env.example
+
+# Generated viewer runtime config (written by gen-config.sh at container start)
+viewer/config.js
+
+# On-prem exposure layers — never commit your own data. Keep only the sample.
+layers/*.json
+!layers/sample-layer.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
