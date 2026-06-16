@@ -11,6 +11,8 @@ const CONFIG = Object.assign(
   window.TAM_CONFIG || {}
 );
 
+const MAX_INLINE_FINDINGS = 100; // cap per technique section, with a "+N more" note
+
 const els = {
   matrix: document.getElementById("matrix"),
   hint: document.getElementById("hint"),
@@ -19,21 +21,16 @@ const els = {
   fileInput: document.getElementById("fileInput"),
   openSc: document.getElementById("openSc"),
   scInfo: document.getElementById("scInfo"),
-  drawer: document.getElementById("drawer"),
-  drawerId: document.getElementById("drawerId"),
-  drawerName: document.getElementById("drawerName"),
-  drawerBody: document.getElementById("drawerBody"),
-  drawerClose: document.getElementById("drawerClose"),
-  scrim: document.getElementById("scrim"),
 };
 
 els.scInfo.textContent = "SC: " + CONFIG.scUrl;
 
 const state = {
-  catalog: null, // {tactics:[{id,name}], techniques:[{id,name,tactics,parent}]}
-  byId: {}, // techniqueID -> catalog technique
-  subsByParent: {}, // parentID -> [sub catalog techniques]
-  index: {}, // techniqueID -> exposure info from the layer
+  catalog: null,
+  byId: {},
+  subsByParent: {},
+  index: {},
+  openId: null, // currently expanded base technique id (accordion)
 };
 
 // --- Wiring ---------------------------------------------------------------
@@ -41,18 +38,13 @@ const state = {
 els.openSc.addEventListener("click", () => window.open(CONFIG.scUrl, "tenable-sc"));
 els.loadDefault.addEventListener("click", () => loadLayer("layers/layer.json"));
 els.onlyExposed.addEventListener("change", renderMatrix);
-els.drawerClose.addEventListener("click", closeDrawer);
-els.scrim.addEventListener("click", closeDrawer);
 els.fileInput.addEventListener("change", (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const r = new FileReader();
   r.onload = () => {
     const layer = safeParse(r.result);
-    if (layer) {
-      buildIndex(layer);
-      renderMatrix();
-    }
+    if (layer) { buildIndex(layer); renderMatrix(); }
   };
   r.readAsText(file);
 });
@@ -81,26 +73,20 @@ async function fetchJson(url) {
     const r = await fetch(url, { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
     return await r.json();
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 async function loadLayer(url) {
   const layer = await fetchJson(url);
-  if (layer) {
-    buildIndex(layer);
-    renderMatrix();
-  }
+  if (layer) { buildIndex(layer); renderMatrix(); }
 }
 
-function safeParse(t) {
-  try { return JSON.parse(t); } catch { return null; }
-}
+function safeParse(t) { try { return JSON.parse(t); } catch { return null; } }
 
 function buildIndex(layer) {
   if (Array.isArray(layer)) layer = layer[0];
   state.index = {};
+  state.openId = null;
   if (!layer || !Array.isArray(layer.techniques)) return;
   for (const t of layer.techniques) {
     if (typeof t.score !== "number") continue;
@@ -114,8 +100,7 @@ function parseTechnique(t) {
   const findings = [];
   for (const m of meta) {
     if (!m || !m.name || !m.name.startsWith("plugin ")) continue;
-    const pid = m.name.slice("plugin ".length).trim();
-    findings.push(parseFinding(pid, m.value || "", links));
+    findings.push(parseFinding(m.name.slice(7).trim(), m.value || "", links));
   }
   return {
     score: t.score,
@@ -130,10 +115,9 @@ function parseTechnique(t) {
 function parseFinding(pluginId, value, links) {
   const cves = value.match(/CVE-\d{4}-\d+/gi) || [];
   const vpr = (value.match(/VPR\s+([\d.]+)/i) || [])[1] || "";
-  const hosts = (value.match(/×(\d+)\s*hosts/i) || [])[1] || "";
   const name = value.split(" — ")[0].trim();
   const link = links.find((l) => l && l.label && l.label.startsWith(pluginId + ":"));
-  return { pluginId, name, cves, vpr, hosts, pluginPageUrl: link ? link.url : "" };
+  return { pluginId, name, cves, vpr, pluginPageUrl: link ? link.url : "" };
 }
 
 function getMeta(meta, key) {
@@ -143,7 +127,6 @@ function getMeta(meta, key) {
 
 // --- Matrix rendering -----------------------------------------------------
 
-// Exposure info for a base technique: its own score plus any scored sub-techniques.
 function exposureFor(baseId) {
   const direct = state.index[baseId] || null;
   const subs = (state.subsByParent[baseId] || [])
@@ -160,21 +143,21 @@ function exposureFor(baseId) {
 function renderMatrix() {
   els.matrix.innerHTML = "";
   const onlyExposed = els.onlyExposed.checked;
-  let totalExposed = 0;
+  let total = 0;
 
   for (const tactic of state.catalog.tactics) {
     const bases = state.catalog.techniques.filter(
       (t) => !t.parent && t.tactics.includes(tactic.id)
     );
-    const cells = [];
     let exposedCount = 0;
+    const cells = [];
     for (const base of bases) {
       const exp = exposureFor(base.id);
       if (exp.exposed) exposedCount++;
       if (onlyExposed && !exp.exposed) continue;
       cells.push(cellEl(base, exp));
     }
-    totalExposed += exposedCount;
+    total += exposedCount;
     if (onlyExposed && exposedCount === 0) continue;
 
     const col = document.createElement("div");
@@ -185,99 +168,95 @@ function renderMatrix() {
     const body = document.createElement("div");
     body.className = "col-cells";
     cells.forEach((c) => body.appendChild(c));
-    col.appendChild(head);
-    col.appendChild(body);
+    col.append(head, body);
     els.matrix.appendChild(col);
   }
 
   els.hint.textContent = onlyExposed
-    ? `${totalExposed} exposed technique(s). Click one to see the vulnerabilities behind it.`
-    : "Click a colored (exposed) technique to see the vulnerabilities behind it.";
+    ? `${total} exposed technique(s) across the matrix. Click one to expand its vulnerabilities.`
+    : "Click a colored (exposed) technique to expand its vulnerabilities.";
 }
 
 function cellEl(base, exp) {
   const cell = document.createElement("div");
-  cell.className = "cell" + (exp.exposed ? " exposed" : " dim");
+  cell.className = "cell " + (exp.exposed ? "exposed" : "dim");
+  cell.dataset.id = base.id;
   if (exp.exposed) {
     cell.style.background = exp.color;
     cell.style.color = textColor(exp.color);
+    cell.style.borderColor = "rgba(0,0,0,0.25)";
   }
-  const subBadge = exp.subs.length
-    ? `<span class="sub-badge">${exp.subs.length}</span>`
-    : "";
   const score = exp.score !== null ? `<span class="score">${exp.score.toFixed(0)}</span>` : "";
+  const subsNote = exp.subs.length
+    ? `<span class="subs-note">▸ ${exp.subs.length} sub-technique${exp.subs.length > 1 ? "s" : ""}</span>`
+    : "";
   cell.innerHTML =
-    subBadge +
-    `<span class="tid">${esc(base.id)}</span>${score}` +
-    `<span class="tname">${esc(base.name)}</span>`;
-  if (exp.exposed) cell.addEventListener("click", () => openDrawer(base, exp));
+    `<div class="cell-top"><span class="tid">${esc(base.id)}</span>${score}</div>` +
+    `<span class="tname">${esc(base.name)}</span>${subsNote}`;
+  if (exp.exposed) cell.addEventListener("click", () => toggleCell(cell, base, exp));
   return cell;
 }
 
-// --- Findings drawer ------------------------------------------------------
+// --- Inline expansion (accordion) -----------------------------------------
 
-function openDrawer(base, exp) {
-  els.drawerId.textContent = base.id;
-  els.drawerName.textContent = base.name;
-  els.drawerBody.innerHTML = "";
+function toggleCell(cell, base, exp) {
+  const isOpen = cell.classList.contains("open");
+  // Close any other open cell (one at a time keeps the matrix tidy).
+  if (state.openId && state.openId !== base.id) {
+    const prev = els.matrix.querySelector('.cell.open[data-id="' + cssEsc(state.openId) + '"]');
+    if (prev) collapse(prev);
+  }
+  if (isOpen) { collapse(cell); state.openId = null; return; }
+
+  const detail = document.createElement("div");
+  detail.className = "cell-detail";
+  detail.addEventListener("click", (e) => e.stopPropagation()); // clicks inside don't re-toggle
 
   const entries = [];
   if (exp.direct) entries.push({ id: base.id, name: base.name, info: exp.direct });
   for (const s of exp.subs) entries.push(s);
 
   for (const e of entries) {
-    const head = document.createElement("div");
-    head.className = "sec-head";
-    const review = e.info.needsReview ? '<span class="badge-review">needs review</span>' : "";
-    head.innerHTML =
-      `<span><b>${esc(e.id)}</b> <span class="sname">${esc(e.name)}</span>${review}</span>` +
-      `<span>${e.info.count} finding(s) · VPR ${esc(e.info.vpr)}</span>`;
-    els.drawerBody.appendChild(head);
-    els.drawerBody.appendChild(findingsTable(e.info.findings));
+    if (entries.length > 1 || e.id !== base.id) {
+      const sh = document.createElement("div");
+      sh.className = "sec-head";
+      const review = e.info.needsReview ? '<span class="badge-review">review</span>' : "";
+      sh.innerHTML = `<b>${esc(e.id)}</b> ${esc(e.name)}${review} · ${e.info.count}`;
+      detail.appendChild(sh);
+    }
+    const shown = e.info.findings.slice(0, MAX_INLINE_FINDINGS);
+    for (const f of shown) detail.appendChild(findingRow(f));
+    if (e.info.findings.length > shown.length) {
+      const more = document.createElement("div");
+      more.className = "more";
+      more.textContent = `+${e.info.findings.length - shown.length} more finding(s)`;
+      detail.appendChild(more);
+    }
   }
 
-  els.drawer.classList.add("open");
-  els.drawer.setAttribute("aria-hidden", "false");
-  els.scrim.hidden = false;
+  cell.appendChild(detail);
+  cell.classList.add("open");
+  state.openId = base.id;
 }
 
-function closeDrawer() {
-  els.drawer.classList.remove("open");
-  els.drawer.setAttribute("aria-hidden", "true");
-  els.scrim.hidden = true;
-}
-
-function findingsTable(findings) {
-  if (!findings.length) {
-    const d = document.createElement("div");
-    d.className = "empty";
-    d.textContent = "No per-finding detail recorded.";
-    return d;
-  }
-  const table = document.createElement("table");
-  table.innerHTML =
-    "<thead><tr><th>Plugin</th><th>Vulnerability</th><th>CVE</th><th>VPR</th><th>Actions</th></tr></thead>";
-  const tbody = document.createElement("tbody");
-  for (const f of findings) tbody.appendChild(findingRow(f));
-  table.appendChild(tbody);
-  return table;
+function collapse(cell) {
+  const d = cell.querySelector(".cell-detail");
+  if (d) d.remove();
+  cell.classList.remove("open");
 }
 
 function findingRow(f) {
-  const tr = document.createElement("tr");
-  const sc = scLink(f.pluginId);
-  const actions =
-    `<a href="${esc(sc)}" target="tenable-sc">Open in SC ↗</a>` +
+  const row = document.createElement("div");
+  row.className = "fr";
+  const meta = [f.cves.join(", "), f.vpr ? "VPR " + f.vpr : ""].filter(Boolean).join(" · ");
+  row.innerHTML =
+    `<div class="fr-name">${esc(f.pluginId)} · ${esc(f.name)}</div>` +
+    (meta ? `<div class="fr-meta">${esc(meta)}</div>` : "") +
+    `<a href="${esc(scLink(f.pluginId))}" target="tenable-sc">Open in SC ↗</a>` +
     (f.pluginPageUrl
       ? `<a href="${esc(f.pluginPageUrl)}" target="_blank" rel="noopener noreferrer">Plugin ↗</a>`
       : "");
-  tr.innerHTML =
-    `<td>${esc(f.pluginId)}</td>` +
-    `<td>${esc(f.name)}</td>` +
-    `<td class="cve">${esc(f.cves.join(", "))}</td>` +
-    `<td class="vpr">${esc(f.vpr)}</td>` +
-    `<td class="actions">${actions}</td>`;
-  return tr;
+  return row;
 }
 
 function scLink(pluginId) {
@@ -293,9 +272,12 @@ function textColor(hex) {
   if (!m) return "#111";
   const n = parseInt(m[1], 16);
   const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  // Relative luminance; light bg -> dark text, dark bg -> light text.
   const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
   return lum > 0.55 ? "#111" : "#fff";
+}
+
+function cssEsc(s) {
+  return String(s).replace(/["\\]/g, "\\$&");
 }
 
 function esc(s) {
