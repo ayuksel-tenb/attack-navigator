@@ -97,10 +97,18 @@ function buildIndex(layer) {
 function parseTechnique(t) {
   const meta = t.metadata || [];
   const links = t.links || [];
+  // "why <pluginId>" rows explain why a finding maps to this technique.
+  const whyById = {};
+  for (const m of meta) {
+    if (m && m.name && m.name.startsWith("why ")) whyById[m.name.slice(4).trim()] = m.value || "";
+  }
   const findings = [];
   for (const m of meta) {
     if (!m || !m.name || !m.name.startsWith("plugin ")) continue;
-    findings.push(parseFinding(m.name.slice(7).trim(), m.value || "", links));
+    const pid = m.name.slice(7).trim();
+    const f = parseFinding(pid, m.value || "", links);
+    f.why = whyById[pid] || "";
+    findings.push(f);
   }
   return {
     score: t.score,
@@ -249,8 +257,11 @@ function findingRow(f) {
   const row = document.createElement("div");
   row.className = "fr";
   const meta = [f.cves.join(", "), f.vpr ? "VPR " + f.vpr : ""].filter(Boolean).join(" · ");
+  const info = f.why
+    ? `<span class="info" title="Why this technique: ${esc(f.why)}">ⓘ</span> `
+    : "";
   row.innerHTML =
-    `<div class="fr-name">${esc(f.pluginId)} · ${esc(f.name)}</div>` +
+    `<div class="fr-name">${info}${esc(f.pluginId)} · ${esc(f.name)}</div>` +
     (meta ? `<div class="fr-meta">${esc(meta)}</div>` : "") +
     `<a href="${esc(scLink(f.pluginId))}" target="tenable-sc">Open in SC ↗</a>` +
     (f.pluginPageUrl
