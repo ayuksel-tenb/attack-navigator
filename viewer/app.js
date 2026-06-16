@@ -5,8 +5,10 @@
 const CONFIG = Object.assign(
   {
     scUrl: "https://localhost:8443",
+    // Tenable.sc cumulative-vulnerabilities view filtered to one plugin. The hash
+    // route carries a URL-encoded JSON filter; {pluginId} sits in its "value".
     pluginUrlTemplate:
-      "{scUrl}/#/analysis/vulnerabilities/sumid?sourceType=cumulative&pluginID={pluginId}",
+      "{scUrl}/#vulnerabilities/cumulative/listvuln/%7B%22filt%22%3A%5B%7B%22id%22%3A%22pluginID%22%2C%22filterName%22%3A%22pluginID%22%2C%22operator%22%3A%22%3D%22%2C%22type%22%3A%22vuln%22%2C%22isPredefined%22%3Atrue%2C%22value%22%3A%22{pluginId}%22%7D%5D%2C%22sortCol%22%3A%22none%22%2C%22sortDir%22%3A%22desc%22%7D/0/0",
   },
   window.TAM_CONFIG || {}
 );

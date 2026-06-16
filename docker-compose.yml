@@ -21,8 +21,10 @@ services:
       # TASC_SC_URL you use in tenable-attack-mapper's .env.
       SC_URL: "${SC_URL:-https://localhost:8443}"
       # Deep-link template for one plugin's vulnerabilities in Security Center.
-      # Tune to your SC version if needed; {scUrl} and {pluginId} are substituted.
-      SC_PLUGIN_URL_TEMPLATE: "${SC_PLUGIN_URL_TEMPLATE:-{scUrl}/#/analysis/vulnerabilities/sumid?sourceType=cumulative&pluginID={pluginId}}"
+      # Left empty here on purpose: the literal { } braces in the default template
+      # can't go in a ${VAR:-default} (the first } would close it), so the default
+      # lives in bin/gen-config.sh. Override via .env to retune for your SC.
+      SC_PLUGIN_URL_TEMPLATE: "${SC_PLUGIN_URL_TEMPLATE:-}"
     volumes:
       - ./viewer:/usr/share/nginx/html
       - ./layers:/usr/share/nginx/html/layers:ro

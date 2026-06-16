@@ -82,11 +82,18 @@ exposure data is never uploaded anywhere or committed.
 | Variable | Purpose | Default |
 |---|---|---|
 | `SC_URL` | Security Center base URL for “Open in SC” links | `https://localhost:8443` |
-| `SC_PLUGIN_URL_TEMPLATE` | Per-plugin deep-link template (`{scUrl}`, `{pluginId}`) | `{scUrl}/#/analysis/vulnerabilities/sumid?sourceType=cumulative&pluginID={pluginId}` |
+| `SC_PLUGIN_URL_TEMPLATE` | Per-plugin deep-link template (`{scUrl}`, `{pluginId}`) | Tenable.sc cumulative-vulnerabilities view filtered to the plugin (see below) |
 
-The deep-link template targets Tenable.sc’s vulnerability analysis view filtered
-to one plugin. If your SC version routes differently, override
-`SC_PLUGIN_URL_TEMPLATE` in `.env` — it’s a one-line change, no rebuild.
+The default deep-link opens Tenable.sc’s **cumulative vulnerabilities** view
+filtered to one plugin (the hash route carries a URL-encoded JSON filter where
+`{pluginId}` is the filter `value`):
+
+```
+{scUrl}/#vulnerabilities/cumulative/listvuln/%7B%22filt%22%3A%5B%7B%22id%22%3A%22pluginID%22%2C%22filterName%22%3A%22pluginID%22%2C%22operator%22%3A%22%3D%22%2C%22type%22%3A%22vuln%22%2C%22isPredefined%22%3Atrue%2C%22value%22%3A%22{pluginId}%22%7D%5D%2C%22sortCol%22%3A%22none%22%2C%22sortDir%22%3A%22desc%22%7D/0/0
+```
+
+If your SC version routes differently, override `SC_PLUGIN_URL_TEMPLATE` in
+`.env` — it’s a one-line change, no rebuild.
 
 Running the viewer **without Docker?** Copy `viewer/config.example.js` to
 `viewer/config.js`, set your values, and serve the `viewer/` + `layers/` folders
