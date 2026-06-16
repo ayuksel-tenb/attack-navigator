@@ -33,7 +33,6 @@ header {
 
 .title { display: flex; align-items: baseline; gap: 12px; }
 h1 { font-size: 16px; margin: 0; letter-spacing: 0.2px; }
-.layer-name { color: var(--muted); font-size: 13px; }
 
 .controls { display: flex; align-items: center; gap: 10px; }
 .controls .sc { color: var(--muted); font-size: 12px; }

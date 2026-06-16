@@ -15,7 +15,6 @@ const CONFIG = Object.assign(
 
 const els = {
   techniques: document.getElementById("techniques"),
-  layerName: document.getElementById("layerName"),
   hint: document.getElementById("hint"),
   scInfo: document.getElementById("scInfo"),
   fileInput: document.getElementById("fileInput"),
@@ -65,7 +64,6 @@ function handleLayer(layer, sourceName) {
     renderEmpty("That file is not a valid ATT&CK Navigator layer.");
     return;
   }
-  els.layerName.textContent = layer.name || sourceName || "layer";
   const techniques = layer.techniques
     .map(parseTechnique)
     .filter((t) => t.score !== null)
