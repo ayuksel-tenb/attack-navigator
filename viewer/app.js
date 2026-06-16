@@ -5,8 +5,6 @@
 const CONFIG = Object.assign(
   {
     scUrl: "https://localhost:8443",
-    // Tenable.sc cumulative-vulnerabilities view filtered to one plugin. The hash
-    // route carries a URL-encoded JSON filter; {pluginId} sits in its "value".
     pluginUrlTemplate:
       "{scUrl}/#vulnerabilities/cumulative/listvuln/%7B%22filt%22%3A%5B%7B%22id%22%3A%22pluginID%22%2C%22filterName%22%3A%22pluginID%22%2C%22operator%22%3A%22%3D%22%2C%22type%22%3A%22vuln%22%2C%22isPredefined%22%3Atrue%2C%22value%22%3A%22{pluginId}%22%7D%5D%2C%22sortCol%22%3A%22none%22%2C%22sortDir%22%3A%22desc%22%7D/0/0",
   },
@@ -14,117 +12,128 @@ const CONFIG = Object.assign(
 );
 
 const els = {
-  techniques: document.getElementById("techniques"),
+  matrix: document.getElementById("matrix"),
   hint: document.getElementById("hint"),
-  scInfo: document.getElementById("scInfo"),
-  fileInput: document.getElementById("fileInput"),
+  onlyExposed: document.getElementById("onlyExposed"),
   loadDefault: document.getElementById("loadDefault"),
+  fileInput: document.getElementById("fileInput"),
   openSc: document.getElementById("openSc"),
+  scInfo: document.getElementById("scInfo"),
+  drawer: document.getElementById("drawer"),
+  drawerId: document.getElementById("drawerId"),
+  drawerName: document.getElementById("drawerName"),
+  drawerBody: document.getElementById("drawerBody"),
+  drawerClose: document.getElementById("drawerClose"),
+  scrim: document.getElementById("scrim"),
 };
 
 els.scInfo.textContent = "SC: " + CONFIG.scUrl;
 
-// Open Security Center in the shared "tenable-sc" window so the user can log in
-// once; every "Open in SC" link then reuses that authenticated tab.
-els.openSc.addEventListener("click", () => {
-  window.open(CONFIG.scUrl, "tenable-sc");
-});
+const state = {
+  catalog: null, // {tactics:[{id,name}], techniques:[{id,name,tactics,parent}]}
+  byId: {}, // techniqueID -> catalog technique
+  subsByParent: {}, // parentID -> [sub catalog techniques]
+  index: {}, // techniqueID -> exposure info from the layer
+};
 
-// --- Event wiring -----------------------------------------------------------
+// --- Wiring ---------------------------------------------------------------
 
-els.loadDefault.addEventListener("click", () => loadFromUrl("layers/layer.json"));
+els.openSc.addEventListener("click", () => window.open(CONFIG.scUrl, "tenable-sc"));
+els.loadDefault.addEventListener("click", () => loadLayer("layers/layer.json"));
+els.onlyExposed.addEventListener("change", renderMatrix);
+els.drawerClose.addEventListener("click", closeDrawer);
+els.scrim.addEventListener("click", closeDrawer);
 els.fileInput.addEventListener("change", (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => handleLayer(safeParse(reader.result), file.name);
-  reader.readAsText(file);
+  const r = new FileReader();
+  r.onload = () => {
+    const layer = safeParse(r.result);
+    if (layer) {
+      buildIndex(layer);
+      renderMatrix();
+    }
+  };
+  r.readAsText(file);
 });
 
-// Try to auto-load the default layer on first paint.
-loadFromUrl("layers/layer.json", { quiet: true });
+boot();
 
-// --- Loading ----------------------------------------------------------------
-
-async function loadFromUrl(url, opts = {}) {
-  try {
-    const resp = await fetch(url, { cache: "no-store" });
-    if (!resp.ok) throw new Error(resp.status + " " + resp.statusText);
-    handleLayer(await resp.json(), url.split("/").pop());
-  } catch (err) {
-    if (!opts.quiet) renderEmpty("Could not load " + url + ": " + err.message);
+async function boot() {
+  state.catalog = await fetchJson("attack-catalog.json");
+  if (!state.catalog) {
+    els.matrix.innerHTML = '<div class="empty">Could not load attack-catalog.json.</div>';
+    return;
   }
+  for (const t of state.catalog.techniques) {
+    state.byId[t.id] = t;
+    if (t.parent) (state.subsByParent[t.parent] ||= []).push(t);
+  }
+  const layer = await fetchJson("layers/layer.json");
+  if (layer) buildIndex(layer);
+  renderMatrix();
 }
 
-function safeParse(text) {
+// --- Loading & parsing ----------------------------------------------------
+
+async function fetchJson(url) {
   try {
-    return JSON.parse(text);
-  } catch (e) {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    return await r.json();
+  } catch {
     return null;
   }
 }
 
-function handleLayer(layer, sourceName) {
-  // The standard Navigator format allows a single layer or a list of layers.
-  if (Array.isArray(layer)) layer = layer[0];
-  if (!layer || !Array.isArray(layer.techniques)) {
-    renderEmpty("That file is not a valid ATT&CK Navigator layer.");
-    return;
+async function loadLayer(url) {
+  const layer = await fetchJson(url);
+  if (layer) {
+    buildIndex(layer);
+    renderMatrix();
   }
-  const techniques = layer.techniques
-    .map(parseTechnique)
-    .filter((t) => t.score !== null)
-    .sort((a, b) => b.score - a.score);
-  render(techniques);
 }
 
-// --- Parsing the standard layer format --------------------------------------
+function safeParse(t) {
+  try { return JSON.parse(t); } catch { return null; }
+}
+
+function buildIndex(layer) {
+  if (Array.isArray(layer)) layer = layer[0];
+  state.index = {};
+  if (!layer || !Array.isArray(layer.techniques)) return;
+  for (const t of layer.techniques) {
+    if (typeof t.score !== "number") continue;
+    state.index[t.techniqueID] = parseTechnique(t);
+  }
+}
 
 function parseTechnique(t) {
   const meta = t.metadata || [];
   const links = t.links || [];
-  const comment = t.comment || "";
-  // First comment line is the technique name when it isn't a stat line.
-  const firstLine = comment.split("\n")[0] || "";
-  const name = /^\d|finding/i.test(firstLine) ? "" : firstLine;
-
   const findings = [];
   for (const m of meta) {
     if (!m || !m.name || !m.name.startsWith("plugin ")) continue;
-    const pluginId = m.name.slice("plugin ".length).trim();
-    findings.push(parseFinding(pluginId, m.value || "", links));
+    const pid = m.name.slice("plugin ".length).trim();
+    findings.push(parseFinding(pid, m.value || "", links));
   }
-
   return {
-    id: t.techniqueID,
-    name: name,
-    score: typeof t.score === "number" ? t.score : null,
-    color: t.color || "#666",
-    needsReview: getMeta(meta, "needs_review") === "true",
+    score: t.score,
+    color: t.color || "#777",
+    findings,
     count: parseInt(getMeta(meta, "findings") || findings.length, 10) || findings.length,
-    totalVpr: getMeta(meta, "total_vpr") || "",
-    findings: findings,
+    vpr: getMeta(meta, "total_vpr") || "",
+    needsReview: getMeta(meta, "needs_review") === "true",
   };
 }
 
 function parseFinding(pluginId, value, links) {
   const cves = value.match(/CVE-\d{4}-\d+/gi) || [];
-  const vprMatch = value.match(/VPR\s+([\d.]+)/i);
-  const hostsMatch = value.match(/×(\d+)\s*hosts/i);
-  // The first " — " segment is the plugin name.
+  const vpr = (value.match(/VPR\s+([\d.]+)/i) || [])[1] || "";
+  const hosts = (value.match(/×(\d+)\s*hosts/i) || [])[1] || "";
   const name = value.split(" — ")[0].trim();
-  // Public plugin page comes from the matching link, when present.
-  const link = links.find(
-    (l) => l && l.label && l.label.startsWith(pluginId + ":")
-  );
-  return {
-    pluginId: pluginId,
-    name: name,
-    cves: cves,
-    vpr: vprMatch ? vprMatch[1] : "",
-    hosts: hostsMatch ? hostsMatch[1] : "",
-    pluginPageUrl: link ? link.url : "",
-  };
+  const link = links.find((l) => l && l.label && l.label.startsWith(pluginId + ":"));
+  return { pluginId, name, cves, vpr, hosts, pluginPageUrl: link ? link.url : "" };
 }
 
 function getMeta(meta, key) {
@@ -132,62 +141,122 @@ function getMeta(meta, key) {
   return row ? row.value : undefined;
 }
 
-// --- Rendering --------------------------------------------------------------
+// --- Matrix rendering -----------------------------------------------------
 
-function render(techniques) {
-  if (!techniques.length) {
-    renderEmpty("No scored techniques in this layer.");
-    return;
+// Exposure info for a base technique: its own score plus any scored sub-techniques.
+function exposureFor(baseId) {
+  const direct = state.index[baseId] || null;
+  const subs = (state.subsByParent[baseId] || [])
+    .filter((s) => state.index[s.id])
+    .map((s) => ({ id: s.id, name: s.name, info: state.index[s.id] }));
+  let color = direct ? direct.color : null;
+  let score = direct ? direct.score : null;
+  for (const s of subs) {
+    if (score === null || s.info.score > score) { score = s.info.score; color = s.info.color; }
   }
-  els.hint.style.display = "";
-  els.techniques.innerHTML = "";
-  for (const t of techniques) els.techniques.appendChild(techniqueEl(t));
+  return { direct, subs, exposed: !!direct || subs.length > 0, color, score };
 }
 
-function renderEmpty(message) {
-  els.hint.style.display = "none";
-  els.techniques.innerHTML = '<div class="empty">' + esc(message) + "</div>";
+function renderMatrix() {
+  els.matrix.innerHTML = "";
+  const onlyExposed = els.onlyExposed.checked;
+  let totalExposed = 0;
+
+  for (const tactic of state.catalog.tactics) {
+    const bases = state.catalog.techniques.filter(
+      (t) => !t.parent && t.tactics.includes(tactic.id)
+    );
+    const cells = [];
+    let exposedCount = 0;
+    for (const base of bases) {
+      const exp = exposureFor(base.id);
+      if (exp.exposed) exposedCount++;
+      if (onlyExposed && !exp.exposed) continue;
+      cells.push(cellEl(base, exp));
+    }
+    totalExposed += exposedCount;
+    if (onlyExposed && exposedCount === 0) continue;
+
+    const col = document.createElement("div");
+    col.className = "col";
+    const head = document.createElement("div");
+    head.className = "col-head";
+    head.innerHTML = `<span>${esc(tactic.name)}</span><span class="n">${exposedCount}</span>`;
+    const body = document.createElement("div");
+    body.className = "col-cells";
+    cells.forEach((c) => body.appendChild(c));
+    col.appendChild(head);
+    col.appendChild(body);
+    els.matrix.appendChild(col);
+  }
+
+  els.hint.textContent = onlyExposed
+    ? `${totalExposed} exposed technique(s). Click one to see the vulnerabilities behind it.`
+    : "Click a colored (exposed) technique to see the vulnerabilities behind it.";
 }
 
-function techniqueEl(t) {
-  const wrap = document.createElement("div");
-  wrap.className = "tech";
+function cellEl(base, exp) {
+  const cell = document.createElement("div");
+  cell.className = "cell" + (exp.exposed ? " exposed" : " dim");
+  if (exp.exposed) {
+    cell.style.background = exp.color;
+    cell.style.color = textColor(exp.color);
+  }
+  const subBadge = exp.subs.length
+    ? `<span class="sub-badge">${exp.subs.length}</span>`
+    : "";
+  const score = exp.score !== null ? `<span class="score">${exp.score.toFixed(0)}</span>` : "";
+  cell.innerHTML =
+    subBadge +
+    `<span class="tid">${esc(base.id)}</span>${score}` +
+    `<span class="tname">${esc(base.name)}</span>`;
+  if (exp.exposed) cell.addEventListener("click", () => openDrawer(base, exp));
+  return cell;
+}
 
-  const head = document.createElement("div");
-  head.className = "tech-head";
-  head.innerHTML =
-    '<span class="swatch" style="background:' + esc(t.color) + '"></span>' +
-    '<div class="score-bar"><span style="width:' + Math.max(2, t.score) +
-      "%;background:" + esc(t.color) + '"></span></div>' +
-    '<div class="tech-id">' + esc(t.id) +
-      '<span class="name">' + esc(t.name) + "</span>" +
-      (t.needsReview ? '<span class="badge-review">needs review</span>' : "") +
-    "</div>" +
-    '<div class="count">' + t.count + " finding(s)" +
-      (t.totalVpr ? " · VPR " + esc(t.totalVpr) : "") + "</div>" +
-    '<div class="score-val">' + t.score.toFixed(0) + "</div>";
-  head.addEventListener("click", () => wrap.classList.toggle("open"));
+// --- Findings drawer ------------------------------------------------------
 
-  const body = document.createElement("div");
-  body.className = "findings";
-  body.appendChild(findingsTable(t.findings));
+function openDrawer(base, exp) {
+  els.drawerId.textContent = base.id;
+  els.drawerName.textContent = base.name;
+  els.drawerBody.innerHTML = "";
 
-  wrap.appendChild(head);
-  wrap.appendChild(body);
-  return wrap;
+  const entries = [];
+  if (exp.direct) entries.push({ id: base.id, name: base.name, info: exp.direct });
+  for (const s of exp.subs) entries.push(s);
+
+  for (const e of entries) {
+    const head = document.createElement("div");
+    head.className = "sec-head";
+    const review = e.info.needsReview ? '<span class="badge-review">needs review</span>' : "";
+    head.innerHTML =
+      `<span><b>${esc(e.id)}</b> <span class="sname">${esc(e.name)}</span>${review}</span>` +
+      `<span>${e.info.count} finding(s) · VPR ${esc(e.info.vpr)}</span>`;
+    els.drawerBody.appendChild(head);
+    els.drawerBody.appendChild(findingsTable(e.info.findings));
+  }
+
+  els.drawer.classList.add("open");
+  els.drawer.setAttribute("aria-hidden", "false");
+  els.scrim.hidden = false;
+}
+
+function closeDrawer() {
+  els.drawer.classList.remove("open");
+  els.drawer.setAttribute("aria-hidden", "true");
+  els.scrim.hidden = true;
 }
 
 function findingsTable(findings) {
   if (!findings.length) {
     const d = document.createElement("div");
     d.className = "empty";
-    d.textContent = "No per-finding detail recorded in this layer.";
+    d.textContent = "No per-finding detail recorded.";
     return d;
   }
   const table = document.createElement("table");
   table.innerHTML =
-    "<thead><tr><th>Plugin</th><th>Vulnerability</th><th>CVE</th>" +
-    "<th>VPR</th><th>Hosts</th><th>Actions</th></tr></thead>";
+    "<thead><tr><th>Plugin</th><th>Vulnerability</th><th>CVE</th><th>VPR</th><th>Actions</th></tr></thead>";
   const tbody = document.createElement("tbody");
   for (const f of findings) tbody.appendChild(findingRow(f));
   table.appendChild(tbody);
@@ -196,31 +265,37 @@ function findingsTable(findings) {
 
 function findingRow(f) {
   const tr = document.createElement("tr");
-  const scUrl = scLink(f.pluginId);
-  // All "Open in SC" links share one named window ("tenable-sc"), so you log in
-  // once and every later click reuses that already-authenticated tab instead of
-  // spawning a fresh tab that asks for login again. (No rel=noopener here — it
-  // would prevent reusing the named window.)
+  const sc = scLink(f.pluginId);
   const actions =
-    '<a href="' + esc(scUrl) + '" target="tenable-sc">Open in SC ↗</a>' +
+    `<a href="${esc(sc)}" target="tenable-sc">Open in SC ↗</a>` +
     (f.pluginPageUrl
-      ? '<a href="' + esc(f.pluginPageUrl) + '" target="_blank" rel="noopener noreferrer">Plugin page ↗</a>'
+      ? `<a href="${esc(f.pluginPageUrl)}" target="_blank" rel="noopener noreferrer">Plugin ↗</a>`
       : "");
   tr.innerHTML =
-    "<td>" + esc(f.pluginId) + "</td>" +
-    "<td>" + esc(f.name) + "</td>" +
-    '<td class="cve">' + esc(f.cves.join(", ")) + "</td>" +
-    '<td class="vpr">' + esc(f.vpr) + "</td>" +
-    "<td>" + esc(f.hosts) + "</td>" +
-    '<td class="actions">' + actions + "</td>";
+    `<td>${esc(f.pluginId)}</td>` +
+    `<td>${esc(f.name)}</td>` +
+    `<td class="cve">${esc(f.cves.join(", "))}</td>` +
+    `<td class="vpr">${esc(f.vpr)}</td>` +
+    `<td class="actions">${actions}</td>`;
   return tr;
 }
 
-// Build the Security Center deep link for one plugin from the configured template.
 function scLink(pluginId) {
   return CONFIG.pluginUrlTemplate
     .replace(/\{scUrl\}/g, CONFIG.scUrl.replace(/\/+$/, ""))
     .replace(/\{pluginId\}/g, encodeURIComponent(pluginId));
+}
+
+// --- helpers --------------------------------------------------------------
+
+function textColor(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return "#111";
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  // Relative luminance; light bg -> dark text, dark bg -> light text.
+  const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  return lum > 0.55 ? "#111" : "#fff";
 }
 
 function esc(s) {

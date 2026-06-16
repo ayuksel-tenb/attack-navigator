@@ -8,10 +8,12 @@ public Navigator instance).
 
 It ships **two** ways to look at the same standard ATT&CK Navigator layer:
 
-1. **Custom viewer** (`http://localhost:8080`) — better UX for this use case:
-   click a technique to expand the **vulnerabilities behind it**, and click a
-   finding to open its **detail page on your own Security Center** (the SC URL
-   comes from your `.env`, never hard-coded).
+1. **Custom viewer** (`http://localhost:8080`) — an **ATT&CK matrix** view
+   (tactics as columns, techniques as cells colored by exposure). Click an exposed
+   technique to open a panel with the **vulnerabilities behind it** (and its scored
+   sub-techniques), and click a finding to open its **detail page on your own
+   Security Center** (SC URL from your `.env`, never hard-coded). Toggle
+   "Only exposed" to show the full matrix vs. just what's exposed.
 2. **Official MITRE ATT&CK Navigator** (`http://localhost:4200`) — the stock
    matrix UI, for anyone who wants the standard tool. The layer is plain
    Navigator v4.5 format, so it loads anywhere.
