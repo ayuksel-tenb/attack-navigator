@@ -15,7 +15,7 @@ services:
   viewer:
     image: nginx:alpine
     ports:
-      - "8080:80"
+      - "${VIEWER_PORT:-8080}:80"
     environment:
       # The Security Center a finding's "Open in SC" link points at. Mirrors the
       # TASC_SC_URL you use in tenable-attack-mapper's .env.
@@ -40,5 +40,5 @@ services:
       dockerfile: Dockerfile
     image: attack-navigator:local
     ports:
-      - "4200:80"
+      - "${NAVIGATOR_PORT:-4200}:80"
     restart: unless-stopped
