@@ -19,9 +19,16 @@ const els = {
   scInfo: document.getElementById("scInfo"),
   fileInput: document.getElementById("fileInput"),
   loadDefault: document.getElementById("loadDefault"),
+  openSc: document.getElementById("openSc"),
 };
 
 els.scInfo.textContent = "SC: " + CONFIG.scUrl;
+
+// Open Security Center in the shared "tenable-sc" window so the user can log in
+// once; every "Open in SC" link then reuses that authenticated tab.
+els.openSc.addEventListener("click", () => {
+  window.open(CONFIG.scUrl, "tenable-sc");
+});
 
 // --- Event wiring -----------------------------------------------------------
 
@@ -190,10 +197,14 @@ function findingsTable(findings) {
 function findingRow(f) {
   const tr = document.createElement("tr");
   const scUrl = scLink(f.pluginId);
+  // All "Open in SC" links share one named window ("tenable-sc"), so you log in
+  // once and every later click reuses that already-authenticated tab instead of
+  // spawning a fresh tab that asks for login again. (No rel=noopener here — it
+  // would prevent reusing the named window.)
   const actions =
-    '<a href="' + esc(scUrl) + '" target="_blank" rel="noopener">Open in SC ↗</a>' +
+    '<a href="' + esc(scUrl) + '" target="tenable-sc">Open in SC ↗</a>' +
     (f.pluginPageUrl
-      ? '<a href="' + esc(f.pluginPageUrl) + '" target="_blank" rel="noopener">Plugin page ↗</a>'
+      ? '<a href="' + esc(f.pluginPageUrl) + '" target="_blank" rel="noopener noreferrer">Plugin page ↗</a>'
       : "");
   tr.innerHTML =
     "<td>" + esc(f.pluginId) + "</td>" +
