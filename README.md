@@ -55,6 +55,13 @@ data is never committed) and the SC URL is injected at container start from `.en
 | `VIEWER_PORT` / `NAVIGATOR_PORT` | host ports if 8080/4200 are taken | `8080` / `4200` |
 | `SC_PLUGIN_URL_TEMPLATE` | per-plugin SC deep-link (`{scUrl}`, `{pluginId}`) | Tenable.sc cumulative-vuln view |
 
+## Fresh start
+
+Tear everything down (this project's containers, the locally-built Navigator image,
+network and volumes) with `./uninstall.sh` — it only touches attack-navigator
+resources, never unrelated containers. Add `--layers` to also clear generated
+layers. Then bring it back with `docker compose up -d viewer`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
