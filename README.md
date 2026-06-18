@@ -57,10 +57,10 @@ data is never committed) and the SC URL is injected at container start from `.en
 
 ## Fresh start
 
-Tear everything down (this project's containers, the locally-built Navigator image,
-network and volumes) with `./uninstall.sh` — it only touches attack-navigator
-resources, never unrelated containers. Add `--layers` to also clear generated
-layers. Then bring it back with `docker compose up -d viewer`.
+Tear everything down with `docker compose down --rmi local --volumes`, then bring it
+back with `docker compose up -d viewer`. (Driving this from
+[tenable-attack-mapper](https://github.com/ayuksel-tenb/tenable-attack-mapper)?
+That repo ships an `./uninstall.sh` that does the full teardown for you.)
 
 ## License
 
